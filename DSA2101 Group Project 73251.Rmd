@@ -1,0 +1,305 @@
+---
+title: "FIFA World Cup Project, Group 73251"
+author: "Angelyn Lee En Qi, Chionh Wan Sim, Guo Hongyi, Zhang Zhenjie"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## 0 Load Libraries
+
+```{r}
+library(tidyverse)
+library(maps)
+library(ggthemes)
+library(ggrepel)
+```
+
+## 1 Introduction
+
+The FIFA World Cup is one of the most prestigious and widely viewed sporting events in the world, and as such we are curious to find out:\
+**Are there any team or teams that are the strongest in the World Cup historically, and if so, which are they?**
+
+To break our main question down, we will be defining "strongest" in the following ways:
+
+-   Most number of matches won
+-   Most number of goals
+-   Furthest into the tournament played
+
+The data used for this project is from [TidyTuesday](https://github.com/rfordatascience/tidytuesday/tree/master/data/2022/2022-11-29) and covers every World Cup match played from 1930 to 2018. The data set consists of 2 tables: `matches` which contains the information of every match played in the World Cups; `cups` which contains the summary information of the World Cup as a whole for every year.
+
+The variables that we will be looking at are:
+
+-   the years that the World Cup is held
+-   the stage at which each individual match is played
+-   the number of goals via the score when they are either the home team or the away team in each match
+-   the winning team of every match
+
+### 1.1 Load Data Set from TidyTuesday
+
+```{r}
+matches <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-11-29/wcmatches.csv')
+cups <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-11-29/worldcups.csv')
+```
+
+## 2 Data Cleaning and Summary
+
+### 2.1 Data Cleaning
+
+#### Filtering of Relevant Years
+
+As the structure and the game format of the World Cup has made multiple changes across the years, we will be narrowing the data to 1986 -- 2018 as the game format for the tournaments is consistent in this timeframe.
+
+The game format in this set of tournaments is:\
+Group → Round of 16 → Quarterfinals → Semifinals → Finals
+
+```{r}
+wcmatches <- matches %>%
+  filter(year>= 1986)
+
+worldcups <- cups %>%
+  filter(year >= 1986)
+```
+
+#### Selecting of Relevant Columns
+
+To allow easier management of the data, we will select the columns that are relevant to our analysis.
+
+For `wcmatches`: `year`, `stage`, `home_team`, `away_team`, `home_score`, `away_score`, `winning_team`, `losing_team`\
+For `worldcups`: `year`, `winner`, `second`, `third`, `fourth`
+
+```{r}
+wcmatches <- wcmatches %>%
+  select(year, stage, home_team, away_team, home_score, away_score, winning_team, losing_team)
+
+worldcups <- worldcups %>%
+  select(year, winner, second, third, fourth)
+```
+
+#### Renaming of Countries
+
+As the name for the USA is inconsistent between `wcmatches` and `worldcups`, we will be renaming all instances of 'United States' to 'USA'. Some teams have been renamed across the years due to political events and hence these teams will be renamed to their latest name for more accurate data processing.
+
+```{r}
+# Define a mapping of old names to new names
+name_mapping <- c("Czechoslovakia" = "Czech Republic",
+                  "West Germany" = "Germany",
+                  "Soviet Union" = "Russia",
+                  "Yugoslavia" = "Serbia",
+                  "FR Yugoslavia" = "Serbia",
+                  "United States" = "USA")
+
+
+# Use case_when to replace old countries names with new country names defined by FIFA
+wcmatches <- wcmatches %>%
+  mutate(home_team = case_when(home_team %in% names(name_mapping) ~ name_mapping[home_team], 
+                               TRUE ~ home_team),
+         away_team = case_when(away_team %in% names(name_mapping) ~ name_mapping[away_team], 
+                               TRUE ~ away_team),
+         winning_team = case_when(winning_team %in% names(name_mapping) ~ name_mapping[winning_team], 
+                               TRUE ~ winning_team),
+         losing_team = case_when(losing_team %in% names(name_mapping) ~ name_mapping[losing_team], 
+                               TRUE ~ losing_team))
+
+worldcups <- worldcups %>%
+  mutate(winner = case_when(winner %in% names(name_mapping) ~ name_mapping[winner], 
+                               TRUE ~ winner),
+         second = case_when(second %in% names(name_mapping) ~ name_mapping[second], 
+                               TRUE ~ second),
+         third = case_when(third %in% names(name_mapping) ~ name_mapping[third], 
+                               TRUE ~ third),
+         fourth = case_when(fourth %in% names(name_mapping) ~ name_mapping[fourth], 
+                               TRUE ~ fourth))
+```
+
+### 2.2 Data Summary
+
+The data that we will be working with includes information of 9 World Cups, from 1986 to 2018.\
+The average number of matches played per team is 4 and there is an average of 2.5 goals made in every match.\
+The average number of goals each team scores in a tournament is 5.1.
+
+```{r}
+cups %>%
+  filter(year >= 1986) %>%
+  summarise(avg_goals_per_game = round(goals_scored/games, 1), avg_goals_per_team = round(goals_scored/teams, 1), avg_games_per_team = round(games*2/teams, 1)) %>%
+  summarise(number_of_games = n(), goals_per_game = mean(avg_goals_per_game), goals_per_team = mean(avg_goals_per_team), games_per_team = mean(avg_games_per_team))
+
+```
+
+As the distribution of the number of goals scored per team per match is right skewed, most teams can expect to make either 0 or 1 goals in the matches they play.
+
+```{r}
+goals_per_team_per_game <- matches %>%
+  filter(year >= 1986) %>%
+  pivot_longer(home_score:away_score, names_to = 'home/away', values_to = 'goals') %>%
+  select(goals)
+summary(goals_per_team_per_game)
+table(goals_per_team_per_game)
+```
+
+## 3 Data Visualisations
+
+### 3.1 World Map Plot of Total Matches Won
+
+This visualisation aims to show the relationship between the number of matches won and the geographical locations of the teams. The world map plot allows a quick and comprehensive overview of the total number of matches won while showcasing all the participating countries in a clear manner. The number of matches won by the team is coloured by intensity where a darker region represents a higher number of matches won by the team from that region. The countries labelled are of teams with at least 10 matches won for its significance in our analysis.
+
+It can be seen that Brazil and Germany are tied with the highest number of matches won, given the darkest shade of blue for these regions. A notable observation from this plot will be that most of the better performing teams that have been labelled are mainly from Europe and South America, as seen from darker coloured regions in these continents. This may be due to the rich history and culture for football in these regions.
+
+```{r}
+# Renaming of Teams for Ease of Plotting
+name_remapping <- c("England" = "UK",
+                  "Scotland" = "UK",
+                  "Wales" = "UK",
+                  "Northern Ireland" = "UK",
+                  "Republic of Ireland" = "Ireland")
+
+wm_matches <- wcmatches %>%
+  mutate(home_team = case_when(home_team %in% names(name_remapping) ~ name_remapping[home_team], 
+                               TRUE ~ home_team),
+         away_team = case_when(away_team %in% names(name_remapping) ~ name_remapping[away_team], 
+                               TRUE ~ away_team),
+         winning_team = case_when(winning_team %in% names(name_remapping) ~ name_remapping[winning_team], 
+                               TRUE ~ winning_team),
+         losing_team = case_when(losing_team %in% names(name_remapping) ~ name_remapping[losing_team], 
+                               TRUE ~ losing_team))
+
+
+# Get the data on the total number of matches won by teams throughout World Cup history
+df = wm_matches %>% 
+  select(winning_team) %>%
+  count(winning_team) %>%
+  filter(winning_team != "NA") %>% # NA happens when there is a draw and there is no winners
+  rename(teams = winning_team, matches_won = n)
+
+# Combine with World Map data to generate Data Map
+world = map_data("world") %>% 
+  left_join(df, by = c("region" = "teams")) %>% 
+  filter(region != "Antarctica")
+
+# Create labels for the countries that have won at least 10 matches
+world2 = world %>% group_by(region) %>%
+  summarise(x = mean(long), y = mean(lat)) %>%
+  left_join(df, by = c("region" = "teams")) %>% 
+  filter(region != "Antarctica") %>%
+  rename(long = x, lat = y) %>%
+  filter(!is.na(matches_won), matches_won >= 15) %>%
+  ungroup()
+
+# Data Map Plot
+ggplot(data = world, aes(x = long, y = lat)) +
+  geom_polygon(aes(fill = matches_won, group = group), color = "white") +
+  scale_fill_continuous(name = "Total Matches",
+                        low = "#9ecae1", high = "#08306b") +
+  geom_label_repel(data = world2, aes(label = region), 
+             box.padding = 0.1, point.padding = 0.2, segment.size = 0.1, size = 2, force = 15) +  # Add country labels at the center
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.title = element_text(face = "bold", size = 10, hjust = 0.5, margin = margin(b = 10)),
+        plot.title = element_text(hjust = 0.5)) +
+  labs(title = "Data Map of Total Matches Won by Teams in World Cup (1986 - 2018)")
+```
+
+### 3.2 Stacked Bar Plot of Total Number of Goals Scored
+
+This visualisation aims to find out the total number of goals scored by the teams through the years by plotting a stacked bar plot of the sum of home and away scores against the individual teams. With a stacked bar plot, it is visually intuitive in seeing which teams appear to be scoring more goals by the length of the bar. The difference in the lengths of the bars may also inform us about how much stronger or weaker the teams may be against the other teams purely based on the number of goals scored. The breakdown of the goals scored every year allows us to quickly compare the goals scored across countries in the individual years.
+
+The plot shows that Germany has the highest number of goals scored in total, suggesting that the team may be one of the strongest teams in the World Cup. It is also seen that Germany is among the top scoring teams in a significant number of years due to its longer length of the coloured bars relative to the rest.
+
+```{r}
+# Getting the total goals scored when the team is the home and the away team
+home_scores = wcmatches %>%
+  select(year, home_team, home_score) %>%
+  rename(team = home_team, score = home_score)
+away_scores = wcmatches %>%
+  select(year, away_team, away_score) %>%
+  rename(team = away_team, score = away_score)
+  
+# Summarize the total goals scored per year by each team
+goals_per_year_by_team = bind_rows(home_scores, away_scores) %>%
+  group_by(year, team) %>%
+  summarize(goals = sum(score)) %>%
+  ungroup()
+  
+# Obtain the top 10 countries that scored the most goals from 1986 to 2018
+top_countries = goals_per_year_by_team %>%
+  group_by(team) %>%
+  summarize(total_goals = sum(goals)) %>%
+  ungroup() %>%
+  arrange(desc(total_goals)) %>%
+  head(10)
+
+# Plotting of data
+ggplot(inner_join(goals_per_year_by_team, top_countries),
+        aes(x = reorder(team, total_goals), y = goals, fill = factor(year))) +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  geom_text(aes(y = total_goals + 5, label = total_goals)) + 
+  coord_flip() +
+  labs(title = "Most goals scored in the World Cup (1986 - 2018)") +
+  scale_y_continuous(breaks = c(0, 25, 50, 75, 100)) +
+  scale_fill_tableau(name = "Year") +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
+        axis.title = element_blank())
+```
+
+### 3.3 Tile Plot of Furthest Stage Teams Progressed
+
+This visualisation aims to find out the furthest stage of game the teams participated before being knocked out of the tournament. A tile plot is used to plot the furthest stage that a team has won a match in the year, with the colour of the tile to indicate the furthest stage that the team has won. The tiles are plotted in chronological order, allowing us to look for any patterns in performance for the teams. Should a team be knocked out consistently at a later stage of the tournament through the years, it could indicate the strength of the team in terms of consistency.
+
+The plot shows that the performance of the different teams varies widely and any form of consistency only lasts for a few tournaments before falling back to a lower stage of the tournament. A notable team will be Germany which progressed significantly into the later half of the stages for the longest number of years, specifically between 2002 and 2014.
+
+```{r}
+# Standardise the stage column of the wcmatches 
+match_wins = wcmatches %>%
+  mutate(stage = case_when(str_detect(stage, "Group") ~ "Group",
+                           str_detect(stage, "Round") ~ "Round of 16",
+                           str_detect(stage, "Quarterfinals") ~ "Quarterfinals",                            
+                           str_detect(stage, "Semifinals") ~ "Semifinals",                            
+                           str_detect(stage, "Final") ~ "Final")) %>%   
+  select(year, stage, winning_team) %>%   
+  na.omit()   
+
+# Obtain the highest stage at which each country reaches in each World Cup 
+max_stage = match_wins %>%   
+  mutate(stage = ordered(stage, c("Group", "Round of 16", "Quarterfinals", "Semifinals", "Final"))) %>%   
+  group_by(winning_team, year) %>%   
+  summarise(best_win = max(stage)) %>%   
+  ungroup() %>%   
+  arrange(year) 
+
+#Filtering teams that have made it into quarterfinals at least once
+qf_teams <- max_stage %>%
+  filter(best_win >= 'Quarterfinals') %>%
+  left_join(max_stage, by = 'winning_team') %>%
+  select(winning_team, year = year.y, best_win = best_win.y)
+
+# Plotting of data 
+ggplot(qf_teams, aes(x = year, y = fct_rev(winning_team), fill = best_win)) + 
+  geom_tile(color = "white") + scale_x_continuous(breaks = seq(from = 1986, to = 2018, by = 4)) + 
+  scale_fill_manual(values = c("Group" = "pink",                              
+                               "Round of 16" = "lightgoldenrod1",                               
+                               "Quarterfinals" = "lightgreen",                              
+                               "Semifinals" = "lightblue",                              
+                               "Final" = "mediumpurple1"), 
+                    name = "Furthest round\nwon in game") +    
+  labs(x = "",     
+       y = "",    
+       title = "Furthest Stage Teams Won (1986 - 2018)",   
+       subtitle = "Using teams that have entered Quarterfinals at least once") + 
+  theme(axis.ticks = element_blank(), aspect.ratio = 1.1)
+```
+
+## 4 Discussion
+
+Through the 3 different metrics of defining 'strongest', it is observed that Germany and Brazil appear to be the best teams amongst all the metrics, with Germany possibly having a slightly better performance than Brazil in terms of consistency and the number of goals scored in total. It can be seen that Germany and Brazil are tied in being the teams with the most matches won, while Germany has the highest number of goals scored followed closely by Brazil. Both countries have had their period of consistency in progressing into the later half of the tournament in this timeframe, though at different periods of time. With these results we may be able to conclude that both teams may be the best teams, but in different timeframes, with Brazil seeing its peak performance from 1994 to 2002 while Germany having its peak performance from 2002 to 2014.
+
+The visualisations also show the volatility of all the teams' performance through the years and a good performance in one tournament will not ensure a good performance in the next. This is dependent on multiple factors such as changes in game structures or the group composition of the teams as players are being added and removed in every tournament. As such, it will be possible to see new teams coming up to be the next strongest team in the future should the conditions favour them.
+
+## 5 References
+
+-   (<https://github.com/rfordatascience/tidytuesday/tree/master/data/2022/2022-11-29>)
+-   (<https://twitter.com/nh_writes/status/1149073881614954497>)
+-   (<https://twitter.com/jubyfree/status/1148481954573983744>)
